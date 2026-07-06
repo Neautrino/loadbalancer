@@ -3,29 +3,34 @@ package internal
 import (
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 )
 
 type LoadBalancer struct {
 	addr string
-	proxy *httputil.ReverseProxy
+	pool *ServerPool
 }
 
-func NewLoadBalancer(addr string, backendURL string) (*LoadBalancer, error) {
-	target, err := url.Parse(backendURL)
+func NewLoadBalancer(addr string, backendURLs []string) (*LoadBalancer, error) {
+	pool, err := NewServerPool(backendURLs)
 	if err != nil {
 		return nil, err
 	}
 
 	return &LoadBalancer{
 		addr: addr,
-		proxy: httputil.NewSingleHostReverseProxy(target),
+		pool: pool,
 	}, nil
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
-	lb.proxy.ServeHTTP(w, r)
+	b := lb.pool.NextRoundRobin()
+	if b == nil {
+		http.Error(w, "no backend available", http.StatusServiceUnavailable)
+		return 
+	}
+
+	log.Printf("[lb] %s %s -> %s", r.Method, r.URL.Path, b.URL)
+	b.Proxy.ServeHTTP(w, r)
 }
 
 func (lb *LoadBalancer) Start() error {

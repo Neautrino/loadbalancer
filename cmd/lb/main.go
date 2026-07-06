@@ -6,9 +6,12 @@ import (
 	"github.com/neautrino/loadbalancer/internal"
 )
 
-
 func main() {
-    lb, err := internal.NewLoadBalancer(":8080", "http://localhost:9001")
+    lb, err := internal.NewLoadBalancer(":8080", []string{
+        "http://localhost:9001",
+        "http://localhost:9002",
+        "http://localhost:9003",
+    })
     if err != nil {
         log.Fatal(err)
     }
