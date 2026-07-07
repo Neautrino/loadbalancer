@@ -9,8 +9,9 @@ servers using **round robin**.
 - **HTTP reverse proxy** — forwards client requests to backends via `httputil.ReverseProxy`
 - **Server pool** — manages multiple backends behind a single entrypoint
 - **Round-robin balancing** — cycles requests evenly across healthy backends (atomic counter)
-- **Per-backend health flag** — each backend carries an atomic alive/dead flag, and the pool
-  only balances over healthy backends (automatic health *checking* is the next milestone)
+- **Active health checks** — a background goroutine periodically pings each backend's `/health`
+  endpoint and flips its alive flag; dead backends are dropped from rotation automatically and
+  rejoin when they recover
 
 ## Project layout
 
@@ -22,18 +23,21 @@ internal/
   loadbalancer.go   # LoadBalancer: implements http.Handler (NewLoadBalancer, ServeHTTP, Start)
   backend.go        # Backend: parsed URL + ReverseProxy + atomic alive flag
   pool.go           # ServerPool: holds backends, Healthy(), NextRoundRobin()
+  health.go         # HealthChecker: background ticker loop that updates alive flags
 ```
 
 ## Architecture
 
-```
-client ──HTTP──▶ LoadBalancer (:8080)
-                    │  pool.NextRoundRobin() picks the next healthy backend
-                    ▼
-                 ServerPool ──▶ Backend :9001
-                            ──▶ Backend :9002
-                            ──▶ Backend :9003
-```
+![Load balancer architecture](docs/architecture.png)
+
+The **Pool** lives *inside* the load balancer — it's the LB's in-memory registry of backends,
+where each `Backend` card points to a real server and carries an alive flag. Two independent
+flows share that registry:
+
+- **Client flow** (on demand): `Client → Proxy → pick an alive backend from the Pool → Server`.
+  The proxy *reads* the alive flags to decide where to send traffic.
+- **Health flow** (on a timer): the `HealthChecker` sends its own `GET /health` to each server
+  every few seconds and *writes* the alive flags back onto the Pool's cards.
 
 `LoadBalancer` implements `http.Handler`, and each `Backend` owns its own `ReverseProxy`.
 Per request: **pick** a healthy backend from the pool → **forward** via that backend's proxy →
@@ -96,7 +100,7 @@ will use.
 
 ## Roadmap
 
-- [ ] **Active health checks** — background goroutine that pings each backend and drops dead ones from rotation automatically
+- [x] **Active health checks** — background goroutine that pings each backend and drops dead ones from rotation automatically
 - [ ] Request logging as middleware (method, path, status, latency)
 - [ ] YAML config to replace the hardcoded backend list
 - [ ] `Strategy` interface + more algorithms (weighted, least-connections, IP hash)

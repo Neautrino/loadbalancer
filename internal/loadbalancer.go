@@ -3,6 +3,7 @@ package internal
 import (
 	"log"
 	"net/http"
+	"time"
 )
 
 type LoadBalancer struct {
@@ -34,6 +35,9 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
 }
 
 func (lb *LoadBalancer) Start() error {
+	checker := NewHealthChecker(lb.pool, 10 * time.Second, "/health")
+	checker.Start()
+	
 	log.Printf("Load balancer listening on %s\n", lb.addr)
 	return  http.ListenAndServe(lb.addr, lb)
 }
