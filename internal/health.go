@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -48,7 +48,7 @@ func (hc *HealthChecker) check(b *pool.Backend) {
 	resp, err := hc.client.Get(url)
 	if err != nil {
 		b.SetAlive(false)
-		log.Printf("*[health] %s DOWN (%v)", b.URL, err)
+		slog.Error("backend down", "url", b.URL.String(), "err", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -56,6 +56,6 @@ func (hc *HealthChecker) check(b *pool.Backend) {
 	alive := resp.StatusCode == http.StatusOK
 	b.SetAlive(alive)
 	if !alive {
-		log.Printf("[health] %s unhealthy (status %d)", b.URL, resp.StatusCode)
+		slog.Warn("backend unhealthy", "url", b.URL.String(), "status", resp.StatusCode)
 	}
  }

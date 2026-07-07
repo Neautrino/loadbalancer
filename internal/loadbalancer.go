@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -35,7 +35,10 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
 		return 
 	}
 
-	log.Printf("[lb] %s %s -> %s", r.Method, r.URL.Path, b.URL)
+	slog.Info("request", "method", r.Method, "path", r.URL.Path, "backend", b.URL.String())
+
+	b.IncrConns()
+	defer b.DecrConns()
 	b.Proxy.ServeHTTP(w, r)
 }
 
@@ -43,6 +46,8 @@ func (lb *LoadBalancer) Start() error {
 	checker := NewHealthChecker(lb.pool, 10 * time.Second, "/health")
 	checker.Start()
 
-	log.Printf("Load balancer listening on %s\n", lb.addr)
-	return  http.ListenAndServe(lb.addr, lb)
+	handler := LoggingMiddleware(lb)
+
+	slog.Info("Load balancer listening on", "addr", lb.addr)
+	return  http.ListenAndServe(lb.addr, handler)
 }
