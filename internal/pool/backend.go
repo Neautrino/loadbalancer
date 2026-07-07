@@ -1,4 +1,4 @@
-package internal
+package pool
 
 import (
 	"net/http/httputil"

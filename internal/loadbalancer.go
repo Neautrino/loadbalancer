@@ -4,15 +4,19 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/neautrino/loadbalancer/internal/algorithms"
+	"github.com/neautrino/loadbalancer/internal/pool"
 )
 
 type LoadBalancer struct {
 	addr string
-	pool *ServerPool
+	pool *pool.ServerPool
+	strategy algorithms.Strategy
 }
 
-func NewLoadBalancer(addr string, backendURLs []string) (*LoadBalancer, error) {
-	pool, err := NewServerPool(backendURLs)
+func NewLoadBalancer(addr string, backendURLs []string, strategy algorithms.Strategy) (*LoadBalancer, error) {
+	pool, err := pool.NewServerPool(backendURLs)
 	if err != nil {
 		return nil, err
 	}
@@ -20,11 +24,12 @@ func NewLoadBalancer(addr string, backendURLs []string) (*LoadBalancer, error) {
 	return &LoadBalancer{
 		addr: addr,
 		pool: pool,
+		strategy: strategy,
 	}, nil
 }
 
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
-	b := lb.pool.NextRoundRobin()
+	b := lb.strategy.Next(lb.pool.Healthy(), r)
 	if b == nil {
 		http.Error(w, "no backend available", http.StatusServiceUnavailable)
 		return 
@@ -37,7 +42,7 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
 func (lb *LoadBalancer) Start() error {
 	checker := NewHealthChecker(lb.pool, 10 * time.Second, "/health")
 	checker.Start()
-	
+
 	log.Printf("Load balancer listening on %s\n", lb.addr)
 	return  http.ListenAndServe(lb.addr, lb)
 }

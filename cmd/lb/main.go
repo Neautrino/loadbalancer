@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/neautrino/loadbalancer/internal"
+	"github.com/neautrino/loadbalancer/internal/algorithms"
 )
 
 func main() {
@@ -11,7 +12,7 @@ func main() {
         "http://localhost:9001",
         "http://localhost:9002",
         "http://localhost:9003",
-    })
+    }, &algorithms.RoundRobin{})
     if err != nil {
         log.Fatal(err)
     }

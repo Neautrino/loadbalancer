@@ -1,10 +1,7 @@
-package internal
-
-import "sync/atomic"
+package pool
 
 type ServerPool struct {
 	backends []*Backend
-	counter atomic.Uint64
 }
 
 func NewServerPool(urls []string) (*ServerPool, error) {
@@ -20,6 +17,10 @@ func NewServerPool(urls []string) (*ServerPool, error) {
 	return pool, nil
 }
 
+func (p *ServerPool) Backends() []*Backend {
+	return  p.backends
+}
+
 func (p *ServerPool) Healthy() []*Backend {
 	healthy := make([]*Backend, 0, len(p.backends))
 	for _, b := range p.backends {
@@ -29,14 +30,4 @@ func (p *ServerPool) Healthy() []*Backend {
 	}
 
 	return  healthy
-}
-
-func (p *ServerPool) NextRoundRobin() *Backend {
-	healthy := p.Healthy()
-	if len(healthy) == 0 {
-		return nil
-	}
-
-	n := p.counter.Add(1)
-	return  healthy[(n-1)%uint64(len(healthy))]
 }

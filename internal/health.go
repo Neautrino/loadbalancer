@@ -4,16 +4,18 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/neautrino/loadbalancer/internal/pool"
 )
 
 type HealthChecker struct {
-	pool *ServerPool
+	pool *pool.ServerPool
 	interval time.Duration
 	path string
 	client *http.Client
 }
 
-func NewHealthChecker(pool *ServerPool, interval time.Duration, path string) *HealthChecker{
+func NewHealthChecker(pool *pool.ServerPool, interval time.Duration, path string) *HealthChecker{
 	return &HealthChecker{
 		pool: pool,
 		interval: interval,
@@ -36,12 +38,12 @@ func (hc *HealthChecker) Start() {
 }
 
 func (hc *HealthChecker) checkAll() {
-	for _, b := range hc.pool.backends {
+	for _, b := range hc.pool.Backends() {
 		hc.check(b)
 	}
 }
 
-func (hc *HealthChecker) check(b *Backend) {
+func (hc *HealthChecker) check(b *pool.Backend) {
 	url := b.URL.String() + hc.path
 	resp, err := hc.client.Get(url)
 	if err != nil {
