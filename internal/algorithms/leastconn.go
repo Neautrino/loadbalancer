@@ -8,6 +8,10 @@ import (
 
 type LeastConn struct {}
 
+func NewLeastConn() *LeastConn { 
+	return &LeastConn{} 
+}
+
 func (lc *LeastConn) Next(healthy []*pool.Backend, r *http.Request) *pool.Backend {
 	if len(healthy) == 0 {
 		return  nil

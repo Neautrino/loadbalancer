@@ -11,6 +11,10 @@ type WeightedRoundRobin struct {
 	mu sync.Mutex
 }
 
+func NewWeightedRoundRobin() *WeightedRoundRobin { 
+	return &WeightedRoundRobin{} 
+}
+
 func (w *WeightedRoundRobin) Next(healthy []*pool.Backend, r *http.Request) *pool.Backend {
 	if len(healthy) == 0 {
 		return nil

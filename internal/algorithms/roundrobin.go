@@ -11,6 +11,10 @@ type RoundRobin struct {
 	counter atomic.Uint64
 }
 
+func NewRoundRobin() *RoundRobin { 
+	return &RoundRobin{}
+}
+
 func (rr *RoundRobin) Next(healthy []*pool.Backend, r *http.Request) *pool.Backend {
 	if len(healthy) == 0 {
 		return nil

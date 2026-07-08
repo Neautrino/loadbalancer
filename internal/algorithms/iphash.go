@@ -11,6 +11,11 @@ import (
 
 type IpHash struct{}
 
+func NewIpHash() *IpHash { 
+	return &IpHash{} 
+}
+
+
 func (h *IpHash) Next(healthy []*pool.Backend, r *http.Request) *pool.Backend {
 	if len(healthy) == 0 {
 		return nil
