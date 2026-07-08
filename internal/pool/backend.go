@@ -1,14 +1,18 @@
 package pool
 
 import (
+	"log/slog"
+	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sync/atomic"
+	"time"
 )
 
 type Backend struct {
 	URL           *url.URL
 	Proxy         *httputil.ReverseProxy
+	Breaker *CircuitBreaker
 	alive         atomic.Bool
 	activeConns   atomic.Int64
 	Weight        int
@@ -23,9 +27,24 @@ func NewBackend(rawUrl string) (*Backend, error) {
 
 	b := &Backend{
 		URL:   target,
-		Proxy: httputil.NewSingleHostReverseProxy(target),
+		Breaker: NewCircuitBreaker(3, 10*time.Second),
 		Weight: 1,
 	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	proxy.ModifyResponse = func(r *http.Response) error {
+		b.Breaker.RecordSuccess()
+		return nil
+	}
+
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		b.Breaker.RecordFailure()
+		slog.Warn("proxy error", "url", b.URL.String(), "err", err)
+		http.Error(w, "backend unavailable", http.StatusBadGateway)
+	}
+
+	b.Proxy = proxy
 	b.alive.Store(true)
 	return b, nil
 }
@@ -48,4 +67,8 @@ func (b *Backend) DecrConns() {
 
 func (b *Backend) ActiveConns() int64 {
 	return b.activeConns.Load()
+}
+
+func (b *Backend) IsAvailable() bool {
+	return  b.alive.Load() && b.Breaker.Allow()
 }

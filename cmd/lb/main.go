@@ -12,7 +12,7 @@ func main() {
         "http://localhost:9001",
         "http://localhost:9002",
         "http://localhost:9003",
-    }, &algorithms.LeastConn{})
+    }, &algorithms.RoundRobin{})
     if err != nil {
         log.Fatal(err)
     }

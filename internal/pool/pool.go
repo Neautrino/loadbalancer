@@ -24,7 +24,7 @@ func (p *ServerPool) Backends() []*Backend {
 func (p *ServerPool) Healthy() []*Backend {
 	healthy := make([]*Backend, 0, len(p.backends))
 	for _, b := range p.backends {
-		if b.IsAlive() {
+		if b.IsAvailable() {
 			healthy = append(healthy, b)
 		}
 	}
