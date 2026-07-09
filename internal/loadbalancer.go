@@ -1,11 +1,13 @@
 package internal
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/neautrino/loadbalancer/internal/algorithms"
+	"github.com/neautrino/loadbalancer/internal/config"
 	"github.com/neautrino/loadbalancer/internal/pool"
 )
 
@@ -13,18 +15,26 @@ type LoadBalancer struct {
 	addr string
 	pool *pool.ServerPool
 	strategy algorithms.Strategy
+	healthInterval time.Duration
+	healthPath string
 }
 
-func NewLoadBalancer(addr string, backendURLs []string, strategy algorithms.Strategy) (*LoadBalancer, error) {
-	pool, err := pool.NewServerPool(backendURLs)
-	if err != nil {
-		return nil, err
+func NewLoadBalancer(cfg *config.Config, strategy algorithms.Strategy) (*LoadBalancer, error) {
+	var backends []*pool.Backend
+	for _, bc := range cfg.Backends {
+		b, err := pool.NewBackend(bc.URL, bc.Weight, cfg.CircuitBreaker.Threshold, time.Duration(cfg.CircuitBreaker.Cooldown))
+		if err != nil {
+			return nil , err
+		}
+		backends = append(backends, b)
 	}
 
 	return &LoadBalancer{
-		addr: addr,
-		pool: pool,
+		addr: fmt.Sprintf(":%d", cfg.Port ),
+		pool: pool.NewServerPool(backends),
 		strategy: strategy,
+		healthInterval: time.Duration(cfg.Health.Interval),
+		healthPath: cfg.Health.Path,
 	}, nil
 }
 
@@ -43,7 +53,7 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request){
 }
 
 func (lb *LoadBalancer) Start() error {
-	checker := NewHealthChecker(lb.pool, 10 * time.Second, "/health")
+	checker := NewHealthChecker(lb.pool, lb.healthInterval, lb.healthPath)
 	checker.Start()
 
 	handler := LoggingMiddleware(lb)

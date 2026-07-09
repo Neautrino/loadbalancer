@@ -1,47 +1,75 @@
 # loadbalancer
 
 A layer-7 (HTTP) load balancer written in Go from scratch — a learning / resume project.
-It acts as a reverse proxy that distributes incoming HTTP requests across a pool of backend
-servers using **round robin**.
+It reverse-proxies incoming HTTP requests across a pool of backend servers, with **pluggable
+balancing algorithms**, **active + passive health checking**, and **per-backend circuit breakers**.
 
-## Features (current)
+## Features
 
 - **HTTP reverse proxy** — forwards client requests to backends via `httputil.ReverseProxy`
 - **Server pool** — manages multiple backends behind a single entrypoint
-- **Round-robin balancing** — cycles requests evenly across healthy backends (atomic counter)
-- **Active health checks** — a background goroutine periodically pings each backend's `/health`
-  endpoint and flips its alive flag; dead backends are dropped from rotation automatically and
-  rejoin when they recover
-
-## Project layout
-
-```
-cmd/
-  lb/main.go        # load balancer entrypoint (listens on :8080)
-  backend/main.go   # test backend server; run several on different ports
-internal/
-  loadbalancer.go   # LoadBalancer: implements http.Handler (NewLoadBalancer, ServeHTTP, Start)
-  backend.go        # Backend: parsed URL + ReverseProxy + atomic alive flag
-  pool.go           # ServerPool: holds backends, Healthy(), NextRoundRobin()
-  health.go         # HealthChecker: background ticker loop that updates alive flags
-```
+- **5 pluggable algorithms** behind a `Strategy` interface — swap with one line:
+  round robin, least connections, weighted round robin, IP hash, and consistent hashing
+- **Active health checks** — a background goroutine pings each backend's `/health` and drops
+  dead backends from rotation automatically (they rejoin on recovery)
+- **Passive health via circuit breakers** — each backend has its own breaker
+  (`closed → open → half-open`) that trips after repeated failures and self-probes for recovery
+- **Structured request logging** — `slog`-based middleware capturing method, path, status, latency
 
 ## Architecture
 
 ![Load balancer architecture](docs/architecture.png)
 
-The **Pool** lives *inside* the load balancer — it's the LB's in-memory registry of backends,
-where each `Backend` card points to a real server and carries an alive flag. Two independent
-flows share that registry:
+A request flows: **Client → LoggingMiddleware → Strategy → ReverseProxy → Server**.
+The `Strategy` only ever picks from `Pool.Healthy()`, and a backend is healthy only when
+**both** gates agree:
 
-- **Client flow** (on demand): `Client → Proxy → pick an alive backend from the Pool → Server`.
-  The proxy *reads* the alive flags to decide where to send traffic.
-- **Health flow** (on a timer): the `HealthChecker` sends its own `GET /health` to each server
-  every few seconds and *writes* the alive flags back onto the Pool's cards.
+```
+Healthy() = alive (set by HealthChecker)  AND  breaker.Allow() (per-backend CircuitBreaker)
+```
 
-`LoadBalancer` implements `http.Handler`, and each `Backend` owns its own `ReverseProxy`.
-Per request: **pick** a healthy backend from the pool → **forward** via that backend's proxy →
-**stream** the response back to the client. If no backend is alive, the LB returns `503`.
+Three independent flows coordinate through shared per-backend state, never calling each other directly:
+
+- **Request flow** (on demand): pick a healthy backend → forward → stream the response back.
+- **Health flow** (background timer): `HealthChecker` GETs `/health` on each server → sets `alive`.
+- **Breaker flow** (on real outcomes): the proxy's `ModifyResponse`/`ErrorHandler` hooks call
+  `RecordSuccess`/`RecordFailure`, tripping the circuit after N failures.
+
+## Balancing algorithms
+
+| Algorithm | How it picks | Best for |
+|---|---|---|
+| **Round robin** | cycles through backends in order (atomic counter) | even load, simplest |
+| **Least connections** | fewest in-flight requests (atomic per-backend counter) | uneven request durations |
+| **Weighted round robin** | smooth WRR proportional to per-backend weight | heterogeneous backends |
+| **IP hash** | `hash(client IP) % n` — sticky sessions | simple client affinity |
+| **Consistent hash** | hash ring + virtual nodes — sticky with minimal remapping | affinity that survives backend changes |
+
+The algorithm is selected by the strategy injected in [`cmd/lb/main.go`](cmd/lb/main.go)
+(config-driven selection is on the roadmap).
+
+## Project layout
+
+```
+cmd/
+  lb/main.go            # LB entrypoint — wires pool + strategy, starts the server
+  backend/main.go       # test backend server (run several on different ports)
+internal/
+  loadbalancer.go       # LoadBalancer: http.Handler (pick → forward), Start()
+  middleware.go         # LoggingMiddleware + statusRecorder (captures status + latency)
+  health.go             # HealthChecker: background ticker pinging /health
+  pool/
+    pool.go             # ServerPool: Healthy(), Backends()
+    backend.go          # Backend: URL, ReverseProxy (+ hooks), alive, activeConns, weight, breaker
+    circuitbreaker.go   # CircuitBreaker: closed/open/half-open state machine
+  algorithms/
+    strategy.go         # Strategy interface (Next)
+    roundrobin.go       # round robin
+    leastconn.go        # least active connections
+    weighted.go         # smooth weighted round robin
+    iphash.go           # IP hash (sticky)
+    consistenthash.go   # consistent hashing (sticky, minimal remap on failover)
+```
 
 ## Requirements
 
@@ -49,8 +77,7 @@ Per request: **pick** a healthy backend from the pool → **forward** via that b
 
 ## Running it
 
-The backend list is currently hardcoded in [`cmd/lb/main.go`](cmd/lb/main.go)
-(`:9001`, `:9002`, `:9003`).
+The backend list and algorithm are currently set in [`cmd/lb/main.go`](cmd/lb/main.go).
 
 **1. Start the backend servers** (three terminals, or background them with `&`):
 
@@ -66,44 +93,49 @@ go run ./cmd/backend -port=9003
 go run ./cmd/lb
 ```
 
-The load balancer now listens on `http://localhost:8080`.
+The load balancer listens on `http://localhost:8080`.
 
 ## Testing it
 
-Send requests and watch them rotate across backends. Each backend echoes its own port:
+Each backend echoes its own port, so you can watch requests distribute:
 
 ```bash
 for i in $(seq 1 6); do curl -s localhost:8080/; done
 ```
 
-Expected output (round robin cycling through the pool):
+Round robin cycles through the pool:
 
 ```
 Hello from backend on port 9001 (path: /)
 Hello from backend on port 9002 (path: /)
 Hello from backend on port 9003 (path: /)
-Hello from backend on port 9001 (path: /)
-Hello from backend on port 9002 (path: /)
-Hello from backend on port 9003 (path: /)
+...
 ```
 
-The load balancer also logs each request and the backend it chose:
+**Least connections / weighted** only differ visibly under concurrent load — use the `/slow`
+endpoint and background the requests:
 
-```
-[lb] GET / -> http://localhost:9001
-[lb] GET / -> http://localhost:9002
-[lb] GET / -> http://localhost:9003
+```bash
+for i in $(seq 1 6); do curl -s localhost:8080/slow & done; wait
 ```
 
-Each backend exposes a `/health` endpoint (returns `200 OK`) that the upcoming health checker
-will use.
+**Consistent hashing** stickiness (same client → same backend) can be tested with spoofed IPs:
+
+```bash
+for ip in 1.1.1.1 2.2.2.2 3.3.3.3; do curl -s -H "X-Forwarded-For: $ip" localhost:8080/; done
+```
+
+**Health / circuit breaker**: kill a backend and watch it drop from rotation (active check), or
+watch a backend's circuit trip to `open` after repeated failures in the logs.
 
 ## Roadmap
 
-- [x] **Active health checks** — background goroutine that pings each backend and drops dead ones from rotation automatically
-- [ ] Request logging as middleware (method, path, status, latency)
-- [ ] YAML config to replace the hardcoded backend list
-- [ ] `Strategy` interface + more algorithms (weighted, least-connections, IP hash)
+- [x] Reverse proxy + server pool
+- [x] `Strategy` interface + 5 algorithms (round robin, least-conn, weighted, IP hash, consistent hash)
+- [x] Active health checks
+- [x] Passive health checks via per-backend circuit breakers
+- [x] Structured request logging middleware (`slog`)
+- [ ] **YAML config** — replace the hardcoded backends/algorithm/weights (next)
 - [ ] Metrics + `/stats` endpoint
 - [ ] TLS termination
 - [ ] Graceful shutdown

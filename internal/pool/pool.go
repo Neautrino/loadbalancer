@@ -4,17 +4,8 @@ type ServerPool struct {
 	backends []*Backend
 }
 
-func NewServerPool(urls []string) (*ServerPool, error) {
-	pool := &ServerPool{}
-	for _, raw := range urls {
-		b, err := NewBackend(raw)
-		if err != nil {
-			return nil, err
-		}
-		pool.backends = append(pool.backends, b)
-	}
-
-	return pool, nil
+func NewServerPool(backends []*Backend) *ServerPool {
+	return &ServerPool{backends: backends}
 }
 
 func (p *ServerPool) Backends() []*Backend {

@@ -19,7 +19,7 @@ type Backend struct {
 	CurrentWeight int
 }
 
-func NewBackend(rawUrl string) (*Backend, error) {
+func NewBackend(rawUrl string, weight int, cbThreshold int, cbCooldown time.Duration) (*Backend, error) {
 	target, err := url.Parse(rawUrl)
 	if err != nil {
 		return nil, err
@@ -27,8 +27,8 @@ func NewBackend(rawUrl string) (*Backend, error) {
 
 	b := &Backend{
 		URL:   target,
-		Breaker: NewCircuitBreaker(3, 10*time.Second),
-		Weight: 1,
+		Breaker: NewCircuitBreaker(cbThreshold, cbCooldown),
+		Weight: weight,
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)

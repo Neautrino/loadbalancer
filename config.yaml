@@ -1,0 +1,18 @@
+port: 8080
+algorithm: least_conn
+
+health:
+  interval: 10s
+  path: /health
+
+circuit_breaker:
+  threshold: 3
+  cooldown: 10s
+
+backends:
+  - url: http://localhost:9001
+    weight: 3
+  - url: http://localhost:9002
+    weight: 1
+  - url: http://localhost:9003
+    weight: 1
